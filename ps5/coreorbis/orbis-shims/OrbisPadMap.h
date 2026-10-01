@@ -234,6 +234,12 @@ inline uint32_t ComboBits(ComboButton b)
 struct Config
 {
 	Target target[S_COUNT];
+	// vk-285-118: how hard a source button presses its target, 0..1 (1 = as before, a full press). Lets a source with no
+	// real pressure sensing of its own (the touchpad's click, say) stand in for a partial press of a DualShock 2 button
+	// that reads pressure -- SOCOM's crouch, at a Triangle pressed lightly instead of all the way (which stands or prones).
+	// Only face buttons/D-pad/shoulders read pressure on real hardware; a light press of a target that doesn't (Start,
+	// the sticks' clicks, the D-pad under PCSX2's digital reading) presses the same as a full one.
+	float pressure[S_COUNT];
 	bool swap_sticks = false;
 	uint8_t left_dpad = 0;    // 0 no, 1 the D-pad too, 2 the D-pad only
 	uint8_t invert_left = 0;  // bit 0 up-down, bit 1 left-right
@@ -246,13 +252,16 @@ struct Config
 	Config()
 	{
 		for (int s = 0; s < S_COUNT; s++)
+		{
 			target[s] = SourceAt(s).def;
+			pressure[s] = 1.0f;
+		}
 	}
 
 	bool operator==(const Config& o) const
 	{
 		for (int s = 0; s < S_COUNT; s++)
-			if (target[s] != o.target[s])
+			if (target[s] != o.target[s] || pressure[s] != o.pressure[s])
 				return false;
 		return swap_sticks == o.swap_sticks && left_dpad == o.left_dpad && invert_left == o.invert_left && invert_right == o.invert_right &&
 		       save[0] == o.save[0] && save[1] == o.save[1] && load[0] == o.load[0] && load[1] == o.load[1] && hold_ms == o.hold_ms;
@@ -289,6 +298,15 @@ inline Config FromSettings(Get get)
 		Target t;
 		if (get(SourceAt(s).key, v) && ParseTarget(v, t))
 			c.target[s] = t;
+		// vk-285-118: "<key>Pressure" (ButtonTouchpadPressure=0.20, say), 0..1. Anything else, or unset, leaves it at 1.
+		v.clear();
+		if (get((std::string(SourceAt(s).key) + "Pressure").c_str(), v))
+		{
+			char* end = nullptr;
+			const double p = std::strtod(v.c_str(), &end);
+			if (end != v.c_str() && p >= 0.0 && p <= 1.0)
+				c.pressure[s] = static_cast<float>(p);
+		}
 	}
 	v.clear();
 	if (get("SwapSticks", v))
@@ -481,7 +499,7 @@ inline Out Apply(const Config& c, const State& s)
 			v = (to_trigger || raw >= kTriggerPress) ? raw / 255.0f : 0.0f;
 		}
 		else
-			v = (s.buttons & SourceAt(src).bits) ? 1.0f : 0.0f;
+			v = (s.buttons & SourceAt(src).bits) ? c.pressure[src] : 0.0f;
 		// PCSX2 reads the analog button and the pressure modifier as on or off (it acts when they change).
 		if ((t == T_ANALOG || t == T_PRESSURE) && v > 0.0f)
 			v = 1.0f;
